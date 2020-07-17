@@ -75,7 +75,14 @@ class NCA:
       Since the input to this softmax is the negative of the
       pairwise L2 distances, we don't need to do the classical
       numerical stability trick.
+      
+      This will cause overflow when large values are exponentiated.
+      Hence the largest value in each row is subtracted from each data
+      point to prevent this. (scikit-learn softmax)
+   
     """
+    max_prob = torch.max(x,dim=1)
+    x = x - max_prob
     exp = torch.exp(x)
     return exp / exp.sum(dim=1)
 
