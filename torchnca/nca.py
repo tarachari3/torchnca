@@ -1,4 +1,5 @@
 import numpy as np
+from sklearn.decomposition import PCA
 import torch
 
 
@@ -22,6 +23,7 @@ class NCA:
         the matrix A.
           - `random`: A = N(0, I)
           - `identity`: A = I
+          - 'pca' : A = PCA	  
       max_iters (int): The maximum number of iterations
         to run the optimization for.
       tol (float): The tolerance for convergence. If the
@@ -43,7 +45,7 @@ class NCA:
       X = (X - self._mean) / self._stddev
     return torch.mm(X, torch.t(self.A))
 
-  def _init_transformation(self):
+  def _init_transformation(self,X):
     """Initialize the linear transformation A.
     """
     if self.dim is None:
@@ -53,6 +55,12 @@ class NCA:
       self.A = torch.nn.Parameter(a)
     elif self.init == "identity":
       a = torch.eye(self.dim, self.num_dims, device=self.device)
+      self.A = torch.nn.Parameter(a)
+    elif self.init == "pca":
+      pca = PCA(n_components=self.dim)
+      pca.fit(X.detach().numpy())
+      transformation = pca.components_
+      a = torch.from_numpy(transformation).cpu()
       self.A = torch.nn.Parameter(a)
     else:
       raise ValueError("[!] {} initialization is not supported.".format(self.init))
@@ -64,7 +72,7 @@ class NCA:
     dot = torch.mm(x.double(), torch.t(x.double()))
     norm_sq = torch.diag(dot)
     dist = norm_sq[None, :] - 2*dot + norm_sq[:, None]
-    dist = torch.clamp(dist, min=0)  # replace negative values with 0
+    dist = torch.clamp(dist, min=0)  # replace negative values with 0, max =___ (50)
     return dist.float()
 
   @staticmethod
@@ -81,9 +89,16 @@ class NCA:
       point to prevent this. (scikit-learn softmax)
    
     """
-    max_prob = torch.max(x,dim=1)
-    x = x - max_prob
-    exp = torch.exp(x)
+#    max_prob,ind = torch.max(x,dim=1)
+#    max_prob = torch.reshape(max_prob,(-1,1))
+#    x = x - max_prob
+    
+#    max_prob,ind = torch.max(-x,dim=1)
+#    max_prob = torch.reshape(max_prob,(-1, 1))
+#    stable = -x - max_prob
+#    stable.diagonal().copy_(-np.inf*torch.ones(len(stable)))
+    
+    exp = torch.exp(x) + 1e-12
     return exp / exp.sum(dim=1)
 
   @property
@@ -138,7 +153,7 @@ class NCA:
     # a minimizer
     # for numerical stability, we only
     # log_sum over non-zero values
-    classification_loss = -torch.log(torch.masked_select(p_i, p_i != 0)).sum()
+    classification_loss = -torch.log(torch.masked_select(p_i, p_i != 0)).sum() # -p_i.sum()
 
     # to prevent the embeddings of different
     # classes from collapsing to the same
@@ -191,13 +206,16 @@ class NCA:
     batch_size = min(batch_size, self.num_train)
 
     # initialize the linear transformation matrix A
-    self._init_transformation()
+#    self._init_transformation(X)
 
     # zero-mean the input data
     if normalize:
       self._mean = X.mean(dim=0)
       self._stddev = X.std(dim=0)
       X = (X - self._mean) / self._stddev
+
+    # initialize the linear transformation matrix A
+    self._init_transformation(X)
 
     optim_args = {
       'lr': lr,
